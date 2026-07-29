@@ -1,44 +1,58 @@
-name: CI Pipeline   # Name of the workflow
+name: CI/CD Pipeline   # Name of the pipeline
 
 on:
   push:
-    branches: [ "main" ]       # Trigger workflow when code is pushed to main branch
+    branches: [ "main" ]     # Run pipeline when pushing to main
   pull_request:
-    branches: [ "main" ]       # Also trigger when a PR is raised to main
+    branches: [ "main" ]     # Run pipeline on PRs to main
 
 permissions:
-  contents: write   # Allows workflow to write to repo if needed
-  packages: write   # Allows workflow to push Docker images/packages
+  contents: write
+  packages: write
 
 jobs:
-  build:                  # Define a job called 'build'
-    runs-on: ubuntu-latest  # Run on a GitHub-hosted Ubuntu machine
+  build:                     # First job: build & push image
+    runs-on: ubuntu-latest   # Run on a GitHub-hosted Ubuntu machine
 
     steps:
-      # Step 1: Checkout repo
       - name: Checkout code
-        uses: actions/checkout@v3   # Pulls the latest repo code into the runner
+        uses: actions/checkout@v3   # Step 1: Pull repo code into runner
 
-      # Step 2: Set up Python
       - name: Set up Python 3.9
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v4   # Step 2: Install Python
         with:
-          python-version: "3.9"     # Installs Python 3.9 on the runner
+          python-version: "3.9"
 
-      # Step 3: Install dependencies
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip    # Upgrade pip
-          pip install -r requirements.txt        # Install project dependencies
-          pip install pytest                     # Install pytest for testing
+        run: |                           # Step 3: Install pip, deps, and pytest
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
 
-      # Step 4: Run tests
       - name: Run tests
         run: pytest --maxfail=1 --disable-warnings -q || echo "No tests found, skipping"
-        # Runs unit tests; if none found, it skips instead of failing pipeline
+        # Step 4: Run unit tests (skip gracefully if none exist)
 
-      # Step 5: Build Docker image
       - name: Build Docker image
         run: docker build -t mlops_ci_cd_iris .
-        # Builds Docker image from Dockerfile in current directory
-        # and tags it with the name 'mlops_ci_cd_iris
+        # Step 5: Build Docker image from Dockerfile, tag as 'mlops_ci_cd_iris'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        # Step 6: Configure AWS access keys stored in GitHub Secrets
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        # Step 7: Authenticate Docker to push to Amazon ECR
+
+      - name: Tag and Push to ECR
+        run: |                             # Step 8: Tag and push image to ECR repo
+          ECR_REGISTRY=${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY=mlops_ci_cd_iris_reg
+          IMAGE_TAG=latest
+          docker tag mlops_ci_cd_iris:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
